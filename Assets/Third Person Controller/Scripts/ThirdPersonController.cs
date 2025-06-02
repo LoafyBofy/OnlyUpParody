@@ -13,7 +13,7 @@ using UnityEngine;
 /// Make sure that the object that will receive this script (the player) 
 /// has the Player tag and the Character Controller component.
 /// </summary>
-public class ThirdPersonController : MonoBehaviour
+public class ThirdPersonController : MonoBehaviour, IPause
 {
 
     [Tooltip("Speed ​​at which the character moves. It is not affected by gravity or jumping.")]
@@ -40,13 +40,15 @@ public class ThirdPersonController : MonoBehaviour
     bool inputJump;
     bool inputSprint;
 
-    Animator animator;
+    [SerializeField] Animator animator;
     CharacterController cc;
+
+    public bool IsPaused { get; set; } = false;
 
     void Start()
     {
         cc = GetComponent<CharacterController>();
-        animator = GetComponentInChildren<AnimationController>().Animator;
+        GetAnimator();
 
         // Message informing the user that they forgot to add an animator
         //if (animator == null)
@@ -57,110 +59,112 @@ public class ThirdPersonController : MonoBehaviour
     // Update is only being used here to identify keys and trigger animations
     void Update()
     {
-
-        // Input checkers
-        inputHorizontal = Input.GetAxis("Horizontal");
-        inputVertical = Input.GetAxis("Vertical");
-        inputJump = Input.GetAxis("Jump") == 1f;
-        inputSprint = Input.GetAxis("Fire3") == 1f;
-
-        // Run and Crouch animation
-        // If dont have animator component, this block wont run
-        if ( cc.isGrounded && animator != null )
+        if (IsPaused == false)
         {
-            // Run
-            float minimumSpeed = 0.9f;
-            animator.SetBool("isWalk", cc.velocity.magnitude > minimumSpeed);
+            // Input checkers
+            inputHorizontal = Input.GetAxis("Horizontal");
+            inputVertical = Input.GetAxis("Vertical");
+            inputJump = Input.GetAxis("Jump") == 1f;
+            inputSprint = Input.GetAxis("Fire3") == 1f;
 
-            // Sprint
-            isSprinting = cc.velocity.magnitude > minimumSpeed && inputSprint;
-            animator.SetBool("isRun", isSprinting ); 
+            // Run and Crouch animation
+            // If dont have animator component, this block wont run
+            if (cc.isGrounded && animator != null)
+            {
+                // Run
+                float minimumSpeed = 0.9f;
+                animator.SetBool("isWalk", cc.velocity.magnitude > minimumSpeed);
 
+                // Sprint
+                isSprinting = cc.velocity.magnitude > minimumSpeed && inputSprint;
+                animator.SetBool("isRun", isSprinting);
+            }
 
+            // Jump animation
+            if (animator != null)
+                animator.SetBool("isJump", cc.isGrounded == false);
+            else
+                GetAnimator();
+
+            // Handle can jump or not
+            if (inputJump && cc.isGrounded)
+            {
+                isJumping = true;
+                // Disable crounching when jumping
+            }
+
+            HeadHittingDetect();
         }
-
-        // Jump animation
-        if (animator != null)
-            animator.SetBool("isJump", cc.isGrounded == false); 
-
-        // Handle can jump or not
-        if ( inputJump && cc.isGrounded )
-        {
-            isJumping = true;
-            // Disable crounching when jumping
-        }
-
-        HeadHittingDetect();
-
     }
 
 
     // With the inputs and animations defined, FixedUpdate is responsible for applying movements and actions to the player
     private void FixedUpdate()
     {
-
-        // Sprinting velocity boost or crounching desacelerate
-        float velocityAdittion = 0;
-        if ( isSprinting )
-            velocityAdittion = sprintAdittion;
-
-        // Direction movement
-        float directionX = inputHorizontal * (velocity + velocityAdittion) * Time.deltaTime;
-        float directionZ = inputVertical * (velocity + velocityAdittion) * Time.deltaTime;
-        float directionY = 0;
-
-        // Jump handler
-        if ( isJumping )
+        if (IsPaused == false)
         {
+            // Sprinting velocity boost or crounching desacelerate
+            float velocityAdittion = 0;
+            if (isSprinting)
+                velocityAdittion = sprintAdittion;
 
-            // Apply inertia and smoothness when climbing the jump
-            // It is not necessary when descending, as gravity itself will gradually pulls
-            directionY = Mathf.SmoothStep(jumpForce, jumpForce * 0.30f, jumpElapsedTime / jumpTime) * Time.deltaTime;
+            // Direction movement
+            float directionX = inputHorizontal * (velocity + velocityAdittion) * Time.deltaTime;
+            float directionZ = inputVertical * (velocity + velocityAdittion) * Time.deltaTime;
+            float directionY = 0;
 
-            // Jump timer
-            jumpElapsedTime += Time.deltaTime;
-            if (jumpElapsedTime >= jumpTime)
+            // Jump handler
+            if (isJumping)
             {
-                isJumping = false;
-                jumpElapsedTime = 0;
+
+                // Apply inertia and smoothness when climbing the jump
+                // It is not necessary when descending, as gravity itself will gradually pulls
+                directionY = Mathf.SmoothStep(jumpForce, jumpForce * 0.30f, jumpElapsedTime / jumpTime) * Time.deltaTime;
+
+                // Jump timer
+                jumpElapsedTime += Time.deltaTime;
+                if (jumpElapsedTime >= jumpTime)
+                {
+                    isJumping = false;
+                    jumpElapsedTime = 0;
+                }
             }
+
+            // Add gravity to Y axis
+            directionY = directionY - gravity * Time.deltaTime;
+
+
+            // --- Character rotation --- 
+
+            Vector3 forward = Camera.main.transform.forward;
+            Vector3 right = Camera.main.transform.right;
+
+            forward.y = 0;
+            right.y = 0;
+
+            forward.Normalize();
+            right.Normalize();
+
+            // Relate the front with the Z direction (depth) and right with X (lateral movement)
+            forward = forward * directionZ;
+            right = right * directionX;
+
+            if (directionX != 0 || directionZ != 0)
+            {
+                float angle = Mathf.Atan2(forward.x + right.x, forward.z + right.z) * Mathf.Rad2Deg;
+                Quaternion rotation = Quaternion.Euler(0, angle, 0);
+                transform.rotation = Quaternion.Slerp(transform.rotation, rotation, 0.15f);
+            }
+
+            // --- End rotation ---
+
+
+            Vector3 verticalDirection = Vector3.up * directionY;
+            Vector3 horizontalDirection = forward + right;
+
+            Vector3 moviment = verticalDirection + horizontalDirection;
+            cc.Move(moviment);
         }
-
-        // Add gravity to Y axis
-        directionY = directionY - gravity * Time.deltaTime;
-
-        
-        // --- Character rotation --- 
-
-        Vector3 forward = Camera.main.transform.forward;
-        Vector3 right = Camera.main.transform.right;
-
-        forward.y = 0;
-        right.y = 0;
-
-        forward.Normalize();
-        right.Normalize();
-
-        // Relate the front with the Z direction (depth) and right with X (lateral movement)
-        forward = forward * directionZ;
-        right = right * directionX;
-
-        if (directionX != 0 || directionZ != 0)
-        {
-            float angle = Mathf.Atan2(forward.x + right.x, forward.z + right.z) * Mathf.Rad2Deg;
-            Quaternion rotation = Quaternion.Euler(0, angle, 0);
-            transform.rotation = Quaternion.Slerp(transform.rotation, rotation, 0.15f);
-        }
-
-        // --- End rotation ---
-
-        
-        Vector3 verticalDirection = Vector3.up * directionY;
-        Vector3 horizontalDirection = forward + right;
-
-        Vector3 moviment = verticalDirection + horizontalDirection;
-        cc.Move( moviment );
-
     }
 
 
@@ -181,4 +185,15 @@ public class ThirdPersonController : MonoBehaviour
         }
     }
 
+    public void TeleportTo(Vector3 coordinates)
+    {
+        cc.enabled = false;
+        transform.position = coordinates;
+        cc.enabled = true;
+    }
+
+    public void GetAnimator()
+    {
+        animator = GetComponentInChildren<Animator>();
+    }
 }
